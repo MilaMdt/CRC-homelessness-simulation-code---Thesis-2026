@@ -1,0 +1,257 @@
+---
+title: "SparseMSE Generalization"
+author: "Mila Madiot"
+date: "2026-06-16"
+output: html_document
+---
+
+```{r}
+library(SparseMSE)
+library(stringr)
+library(combinat)
+```
+
+
+## Simulating the data
+```{r}
+
+get_prob= function(age, famous,sex, sample){
+  base_prob = 0.1
+  
+  if(sex==1 & sample==3){base_prob = base_prob + 0.15}
+  
+  base_prob = base_prob + 0.15*(famous==0)
+  
+  #if(age==2){base_prob = base_prob + 0.1}
+  
+  #if((age==1)|(age==3)){base_prob = base_prob - 0.1}
+  
+  pmax(pmin(base_prob, 1), 0)
+}
+
+colonI <- function(formula_X) {
+  var_pattern <- "[A-Za-z][0-9]*"
+  
+  # 4th way interactions
+  if(str_count(formula_X, ":")==3){
+    formula_str = gsub(
+      paste0("(", var_pattern, "):(", var_pattern, "):(", var_pattern, "):(",var_pattern,")"),
+      "I(\\1*\\2*\\3*\\4)",
+      formula_X
+    )
+  }
+  
+  # 3rd way interactions
+  if(str_count(formula_X, ":")==2){
+    formula_str = gsub(
+      paste0("(", var_pattern, "):(", var_pattern, "):(", var_pattern, ")"),
+      "I(\\1*\\2*\\3)",
+      formula_X
+    )
+  }
+  
+  # pairs
+  if(str_count(formula_X, ":")==1){
+    formula_str = gsub(
+      paste0("(", var_pattern, "):(", var_pattern, ")"),
+      "I(\\1*\\2)",
+      formula_X
+    )
+  }
+  
+  if(str_count(formula_X, ":")==0){
+    formula_str = formula_X
+  }
+  
+  return(formula_str)
+}
+
+insert_colon = function(x){
+  var = regmatches(x, gregexpr("[A-Za-z][0-9]*", x))[[1]]
+  paste0(var, collapse = ":")
+}
+```
+
+```{r}
+set.seed(42)
+popSize = 20000
+Nsamples = 3
+
+famous   = sample(c(0,1), popSize, replace=TRUE, prob=c(0.4,0.6)) # 1 for famous
+  sex    = sample(c(0,1), popSize, replace=TRUE, prob=c(0.5,0.5)) # 1 for woman, 2 for man
+  age    = sample(c(0,1,2), popSize, replace=TRUE, prob=c(0.2,0.6,0.2))
+  # created the population
+  
+  Samples = matrix(NA, popSize, Nsamples)
+  inclusionProbs = matrix(NA, popSize, Nsamples)
+  
+  for (s in 1:Nsamples){
+    inclusionProbs[,s] = mapply(get_prob,age=age, famous = famous,sex= sex, MoreArgs=list(sample=s))
+    Samples[,s] = rbinom(popSize, 1, inclusionProbs[,s])
+  }
+  colnames(Samples) = c("G","W","Z")
+  freq = 1
+  dfile = cbind(Samples,age, famous, sex)
+  colnames(dfile) = c("G","W","Z","B", "F","S")
+  dfile = as.data.frame(dfile)
+  tb = as.data.frame(table(dfile))
+  B2 = model.matrix(~B, tb)[,2]
+  B3 = model.matrix(~B, tb)[,3]
+  names(B2) = NULL
+  names(B3) = NULL
+  tb$B = NULL
+  tb$B2 = B2
+  tb$B3 = B3
+  tb = tb[, c("G","W","Z","F","S","B2","B3","Freq")]
+  
+  for (col in c('G','W','Z','F','S','B2','B3')){
+    tb[[col]] = as.numeric(tb[[col]])
+  }
+  for (col in c('G','W','Z','F','S')){
+    for (row in 1:nrow(tb)){
+      if(tb[[col]][row] == 1) tb[[col]][row] = 0 else tb[[col]][row] = 1
+    }
+  }
+  
+  null_obs = sum(tb[(tb[,1] == 0) & (tb[,2] == 0) & (tb[,3] == 0),]$Freq)
+  tb[tb[,1] == 0 & tb[,2] == 0 & tb[,3] == 0,]$Freq = 0
+  
+  tb
+```
+
+
+## Full 3rd order model
+
+```{r}
+me = c("G","W","Z","F","S","B2","B3")
+twoe   = unlist(lapply(combn(me,2,simplify=FALSE),paste0, collapse = ""))
+twoe = twoe[-which(twoe == "B2B3")]
+threee = unlist(lapply(combn(me,3,simplify=FALSE),paste0, collapse = ""))
+threee = threee[-which(threee %in% c("GWZ","GB2B3","WB2B3","ZB2B3","FB2B3","SB2B3"))]
+```
+
+```{r}
+three_formula = sapply(c(me,twoe,threee), insert_colon)
+three_model   = as.formula(paste("Freq ~",paste(three_formula, collapse=" + ")))
+  
+formula_X = strsplit(as.character(three_model), " ")[[3]]
+formula_X = formula_X[!grepl("+", formula_X, fixed = TRUE)] 
+formula_X = formula_X[!grepl("*", formula_X, fixed = TRUE)] 
+  
+formula_X = sapply(formula_X, colonI)
+formula_X = paste0("Freq~", paste0(c(formula_X), collapse="+"), collapse="")
+  
+l <- rep(list(0:1), 7)
+X = as.data.frame(cbind(rep(1,nrow(as.matrix(expand.grid(l))[-1,])),
+                        as.matrix(expand.grid(l))[-1,]))
+colnames(X) = c("Freq",me)
+X = as.matrix(model.frame(as.formula(formula_X), data = X))
+dim(X)
+```
+
+# Identifiability
+
+## Function
+
+```{r}
+model_to_X = function(model, nb_var = 7, tb){
+  # model given without "Freq ~ "
+  
+  formula_X = strsplit(as.character(model), " ")[[3]]
+  formula_X = formula_X[!grepl("+", formula_X, fixed = TRUE)] 
+  formula_X = formula_X[!grepl("*", formula_X, fixed = TRUE)] 
+  
+  formula_X = sapply(formula_X, colonI)
+  formula_X = paste0("Freq~", paste0(c(formula_X), collapse="+"), collapse="")
+  
+  l <- rep(list(0:1), nb_var)
+  X = as.data.frame(cbind(rep(1,nrow(as.matrix(expand.grid(l))[-1,])),
+                        as.matrix(expand.grid(l))[-1,]))
+  colnames(X) = c("Freq",me)
+  
+  # empty overlaps that could have been observed
+  # but here it is not the combination of variables that give 0 regardless of other variable
+  # for example : eo can indicate that GZWF has 0 counts
+  # but still GZWFS can have some counts
+  out2 = tb[(tb$Freq == 0)&((tb$G!=0)|(tb$W!=0)|(tb$Z!=0)),]
+  out3 = matrix(NA, nrow=nrow(out2), ncol= nb_var)
+  for (row in 1:nrow(out2)){
+    param = (out2[row,]==1)
+    for (col in 1:nb_var){
+      if(param[col]) out3[row,col] = colnames(param)[col] else out3[row,col] = ""
+    }
+  }
+  eo = apply(out3, 1 , paste0, collapse = "")
+  
+  # new formulation of the model that takes out the coeff without overlaps if necessary
+  pattern = character(length(eo))
+  for (pat in 1:length(eo)){
+  tokens = unlist(regmatches(eo[pat], gregexpr("[A-Z][0-9]*", eo[pat])))
+  joined = paste(tokens, collapse = "\\*")
+  pattern[pat] = paste0("\\+I\\(", joined, "\\)")
+  formula_X = gsub(pattern[pat], "", formula_X) # we take it out
+  }
+  
+  X = as.matrix(model.frame(as.formula(formula_X), data = X)) # based on the new formula_X
+  
+  # take out non-existing terms :
+  out = which((X[,2]==0)&(X[,3]==0)&(X[,4]==0))
+  X_upd = X[-out,]
+  X_upd = as.data.frame(X_upd)
+  X_upd = X_upd[-which((X_upd$B2==1)&(X_upd$B3==1)),]
+  X_mat = as.matrix(X_upd)
+  
+  return(list(X_mat = X_mat, emptyoverlaps = eo, formula_X = formula_X))
+}
+```
+Here the function is adapted to the names of the dummies.
+
+## Test
+
+```{r}
+X_info = model_to_X(three_model, nb_var = 7, tb=tb)
+dim(X_info$X_mat)[2] - qr(X_info$X_mat)$rank
+```
+
+If the result is 0, the model is identifiable.
+
+# Existence
+
+```{r}
+counts = numeric()
+X_upd = as.data.frame(X_info$X_mat)
+for (row in 1:nrow(X_upd)){ # and not nrow(tb) because it includes more rows
+  tbrow = 1
+  found = 0
+  while(found == 0){ # we test until we find the match
+    if(mean(tb[tbrow,-8] == X_upd[row,2:8])==1){
+      counts[row] = tb[tbrow,8]
+      found = 1
+    } else {
+      tbrow = tbrow + 1
+    }
+  }
+}
+length(counts)
+```
+The column indices should be adapted so that it compares the main effects columns (without the "Freq" column).
+```{r}
+check_exist_adapt = function(X_mat, counts){
+  amat = t(X_mat)
+  tvec = t(X_mat) %*% counts
+  tt = tvec
+  npar = dim(amat)[1]
+  nobs = dim(amat)[2]
+  f.obj = c(rep(0, nobs), 1)
+  const.rhs = c(tt, rep(0, nobs))
+  amat1 = cbind(amat, rep(0, npar))
+  amat2 = cbind(diag(nobs), rep(-1, nobs))
+  const.mat = rbind(amat1, amat2)
+  const.dir = c(rep("=", npar), rep(">=", nobs))
+  zlp = lpSolve::lp("max", f.obj, const.mat, const.dir, const.rhs)
+  return(list(s = zlp$objval))
+}
+check_exist_adapt(X_info$X_mat, counts)
+```
+
+If s=0, the estimate is not finite. If s is strictly positive, the estimate exists and is finite.
