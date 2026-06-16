@@ -1,0 +1,1 @@
+In this folder, several of the model selection processes are tested with more complex data, including some inclusion probabilities on famous people in contrast with their distribution in the population.
