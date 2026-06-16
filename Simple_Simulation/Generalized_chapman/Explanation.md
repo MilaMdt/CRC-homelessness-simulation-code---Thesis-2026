@@ -1,0 +1,1 @@
+To observe the differences in the model selected between the standard and the Generalized Chapman estimators, we implemented the selection processes again on the simple simulated data and included the Generalized Chapman correction in the dcat.fit() function.
