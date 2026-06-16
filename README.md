@@ -7,4 +7,5 @@ In the famous simulation folder, few model selection processes are developed wit
 
 ## Simple Simulation test
 
-In this folder, all model selections built are coded using simple simulated data. A difference is made between codes with the standard estimator and codes with the Generalized Chapman estimator. With the homelessness data (not accessible here), every file estimates the population size for both estimators simultaneously.
+In this folder, all model selections built are coded using simple simulated data. A difference is made between codes with the standard estimator and codes with the Generalized Chapman estimator (which can be found in the folder Generalized_Chapman). With the homelessness data (not accessible here), every file estimates the population size for both estimators simultaneously.
+The Bayesian model NPLCM is also applied to this simulated data (NPLCM folder).
